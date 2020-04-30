@@ -67,23 +67,25 @@ data Tag
   | TagSynchronize
 
 decode :: Bytes -> Maybe [Attribute]
-decode b@(Bytes arr _ _) = case Parser.parseBytes parserPrefix b of
-  Parser.Failure _ -> Nothing
-  Parser.Success (Parser.Slice off len _) ->
+decode b@(Bytes arr _ _)
+    -- Drop everything until the first equals sign.
+  | !b'@(Bytes _ off' len') <- Bytes.dropWhile (\c -> c /= 0x3D) b
+  , Bytes.length b >= Bytes.length b' + 2
+  , adjusted <- Bytes arr (off' - 2) (len' - 2)
+    -- Drop trailing spaces, carriage returns, and newlines. These
+    -- often end up at the end of logs.
+  , trimmed <- Bytes.dropWhileEnd (\c -> c == 0x0A || c == 0x0D || c == 0x20) adjusted =
     -- These wildcard bangs are here so stop GHC from repeatedly
     -- forcing the hashmaps while parsing the fields.
     let !_ = tags
         !_ = fields
         !_ = Protocol.hashMap
-        -- Drop trailing spaces, carriage returns, and newlines. These
-        -- often end up at the end of logs.
-        !b' = Bytes.dropWhileEnd (\c -> c == 0x0A || c == 0x0D || c == 0x20) (Bytes arr off len)
         -- If you specialize the monad to Identity instead of Just, the
         -- generated code becomes way worse. Not sure why.
      in Stream.foldl' (flip (:)) []
       . Stream.mapMaybe tokenizeAndParse
       . Bytes.splitStream 0x20
-      $ b'
+      $ trimmed
 
 fields :: Map Field
 fields = Map.fromTrustedList
